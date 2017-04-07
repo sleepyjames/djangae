@@ -228,21 +228,28 @@ def add_entities_to_cache(model, entities, situation, namespace, skip_memcache=F
         # We have to wipe the entity from memcache
         _remove_entities_from_memcache_by_key([entity.key() for entity in entities if entity.key()], namespace)
 
-    identifiers = [
-        unique_identifiers_from_entity(model, entity) for entity in entities
-    ]
+    context = get_context()
+    identifiers = []
 
-    for ent_identifiers, entity in zip(identifiers, entities):
-        get_context().stack.top.cache_entity(_apply_namespace(ent_identifiers, namespace), entity, situation)
+    if context.context_enabled or context.memcache_enabled:
+        identifiers = [
+            unique_identifiers_from_entity(model, entity) for entity in entities
+        ]
+
+    if context.context_enabled:
+        for ent_identifiers, entity in zip(identifiers, entities):
+            get_context().stack.top.cache_entity(_apply_namespace(ent_identifiers, namespace), entity, situation)
 
     # Only cache in memcache of we are doing a GET (outside a transaction) or PUT (outside a transaction)
     # the exception is GET_PUT - which we do in our own transaction so we have to ignore that!
     if (
-        (
-            not datastore.IsInTransaction()
-            and situation in (CachingSituation.DATASTORE_GET, CachingSituation.DATASTORE_PUT)
+        context.memcache_enabled and (
+            (
+                not datastore.IsInTransaction()
+                and situation in (CachingSituation.DATASTORE_GET, CachingSituation.DATASTORE_PUT)
+            )
+            or situation == CachingSituation.DATASTORE_GET_PUT
         )
-        or situation == CachingSituation.DATASTORE_GET_PUT
     ):
 
         if not skip_memcache:
