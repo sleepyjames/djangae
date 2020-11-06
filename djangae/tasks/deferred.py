@@ -173,38 +173,39 @@ def _schedule_task(
 
     client = get_cloud_tasks_client()
     deferred_task = None
-    try:
-        # Always use an entity group unless this has been
-        # explicitly marked as a small task
-        if not small_task:
-            deferred_task = DeferredTask.objects.create(data=pickled_data)
 
-        queue = queue or _DEFAULT_QUEUE
-        path = client.queue_path(project_id, location, queue)
+    # Always use an entity group unless this has been
+    # explicitly marked as a small task
+    if not small_task:
+        deferred_task = DeferredTask.objects.create(data=pickled_data)
 
-        schedule_time = task_args['eta']
-        if task_args['countdown']:
-            schedule_time = timezone.now() + timedelta(seconds=task_args['countdown'])
+    queue = queue or _DEFAULT_QUEUE
+    path = client.queue_path(project_id, location, queue)
 
-        if schedule_time:
-            # If a schedule time has bee requested, we need to convert
-            # to a Timestamp
-            ts = Timestamp()
-            ts.FromDatetime(schedule_time)
-            schedule_time = ts
+    schedule_time = task_args['eta']
+    if task_args['countdown']:
+        schedule_time = timezone.now() + timedelta(seconds=task_args['countdown'])
 
-        task = {
-            'name': task_args['name'],
-            'schedule_time': schedule_time,
-            'app_engine_http_request': {  # Specify the type of request.
-                'http_method': 'POST',
-                'relative_uri': deferred_handler_url,
-                'body': pickled_data,
-                'headers': task_headers,
-                'app_engine_routing': task_args["routing"],
-            }
+    if schedule_time:
+        # If a schedule time has bee requested, we need to convert
+        # to a Timestamp
+        ts = Timestamp()
+        ts.FromDatetime(schedule_time)
+        schedule_time = ts
+
+    task = {
+        'name': task_args['name'],
+        'schedule_time': schedule_time,
+        'app_engine_http_request': {  # Specify the type of request.
+            'http_method': 'POST',
+            'relative_uri': deferred_handler_url,
+            'body': pickled_data,
+            'headers': task_headers,
+            'app_engine_routing': task_args["routing"],
         }
+    }
 
+    try:
         # Defer the task
         task = client.create_task(path, task)  # FIXME: Handle transactional
 
@@ -218,17 +219,9 @@ def _schedule_task(
         if small_task:
             raise
 
-        pickled = _serialize(_run_from_datastore, deferred_task.pk)
-
-        task = {
-            'app_engine_http_request': {  # Specify the type of request.
-                'http_method': 'POST',
-                'relative_uri': deferred_handler_url,
-                'body': pickled,
-                'headers': task_headers,
-                'app_engine_routing': task_args["routing"],
-            }
-        }
+        # Replace the task body with one containing a function to run the
+        # original task body which is stored in the datastore entity.
+        task["body"] = _serialize(_run_from_datastore, deferred_task.pk)
 
         client.create_task(path, task)  # FIXME: Handle transactional
     except:  # noqa
